@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chess Game - Jouez aux échecs en ligne</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2c3e50 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .hero-section {
+            padding: 100px 0;
+            text-align: center;
+        }
+        .auth-forms {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 30px;
+            margin-top: 50px;
+        }
+        .form-control {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+        }
+        .form-control:focus {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        .btn-primary {
+            background: #3498db;
+            border: none;
+            padding: 10px 30px;
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .nav-link {
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 0 5px;
+            display: inline-block;
+        }
+        .nav-link:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+        .navbar {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            padding: 15px 0;
+        }
+        .navbar-brand {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        .btn-logout {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .btn-logout:hover {
+            background: #c0392b;
+            color: white;
+            transform: translateY(-2px);
+        }
+        .button-group {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+        }
+        .btn-outline-light {
+            display: inline-block;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="#">Chess Game</a>
+            <div class="ms-auto button-group" id="authButtons">
+                <button class="btn btn-outline-light" onclick="showLoginForm()">Connexion</button>
+                <button class="btn btn-primary" onclick="showRegisterForm()">Inscription</button>
+            </div>
+            <div class="ms-auto button-group" id="userInfo" style="display: none;">
+                <a href="/games" class="nav-link">Parties</a>
+                <a href="/profile" class="nav-link" id="profileLink">Mon Profil</a>
+                <button class="btn btn-logout" onclick="handleLogout()">Déconnexion</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="hero-section">
+        <div class="container">
+            <h1 class="display-4 mb-4">Bienvenue sur Chess Game</h1>
+            <p class="lead mb-5">Jouez aux échecs en ligne avec des joueurs du monde entier</p>
+            
+            <div class="row justify-content-center">
+                <div class="col-md-6">
+                    <div id="loginForm" class="auth-forms" style="display: none;">
+                        <h3 class="mb-4">Connexion</h3>
+                        <form onsubmit="handleLogin(event)">
+                            <div class="mb-3">
+                                <input type="text" class="form-control" placeholder="Nom d'utilisateur" id="loginUsername" required>
+                            </div>
+                            <div class="mb-3">
+                                <input type="password" class="form-control" placeholder="Mot de passe" id="loginPassword" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Se connecter</button>
+                        </form>
+                    </div>
+
+                    <div id="registerForm" class="auth-forms" style="display: none;">
+                        <h3 class="mb-4">Inscription</h3>
+                        <form onsubmit="handleRegister(event)">
+                            <div class="mb-3">
+                                <input type="text" class="form-control" placeholder="Nom d'utilisateur" id="registerUsername" required>
+                            </div>
+                            <div class="mb-3">
+                                <input type="email" class="form-control" placeholder="Email" id="registerEmail" required>
+                            </div>
+                            <div class="mb-3">
+                                <input type="password" class="form-control" placeholder="Mot de passe" id="registerPassword" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">S'inscrire</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Vérifier l'état de connexion au chargement de la page
+        window.addEventListener('load', checkAuthStatus);
+
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch('/api/user/status');
+                const data = await response.json();
+                
+                if (data.is_authenticated) {
+                    showUserInfo(data);
+                } else {
+                    showAuthButtons();
+                }
+            } catch (error) {
+                console.error('Erreur lors de la vérification du statut:', error);
+            }
+        }
+
+        function showUserInfo(userData) {
+            document.getElementById('authButtons').style.display = 'none';
+            document.getElementById('userInfo').style.display = 'block';
+            document.getElementById('profileLink').textContent = `Profil de ${userData.username}`;
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'none';
+        }
+
+        function showAuthButtons() {
+            document.getElementById('authButtons').style.display = 'block';
+            document.getElementById('userInfo').style.display = 'none';
+        }
+
+        function showLoginForm() {
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('registerForm').style.display = 'none';
+        }
+
+        function showRegisterForm() {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('registerForm').style.display = 'block';
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            try {
+                const response = await fetch('/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password }),
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showUserInfo(data.user);
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                alert('Erreur lors de la connexion');
+            }
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            const username = document.getElementById('registerUsername').value;
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+
+            try {
+                const response = await fetch('/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, email, password }),
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    alert('Inscription réussie !');
+                    showLoginForm();
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                alert('Erreur lors de l\'inscription');
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                const response = await fetch('/logout');
+                if (response.ok) {
+                    showAuthButtons();
+                    document.getElementById('loginUsername').value = '';
+                    document.getElementById('loginPassword').value = '';
+                }
+            } catch (error) {
+                alert('Erreur lors de la déconnexion');
+            }
+        }
+    </script>
+</body>
+</html> 

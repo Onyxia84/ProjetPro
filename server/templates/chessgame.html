@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ game.name }} - Échecs en ligne</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="game-container">
+        <div class="game-info">
+            <h1>{{ game.name }}</h1>
+            {% if game.description %}
+            <p class="game-description">{{ game.description }}</p>
+            {% endif %}
+            <div class="player-info">
+                <div class="player white">
+                    <h3>Blancs : {{ game.white_player.username }}</h3>
+                </div>
+                <div class="player black">
+                    <h3>Noirs : {{ game.black_player.username }}</h3>
+                </div>
+            </div>
+            <div class="game-status">
+                <p>Votre couleur : <strong>{{ color|title }}</strong></p>
+                <p>Adversaire : <strong>{{ opponent.username }}</strong></p>
+            </div>
+        </div>
+        
+        <div id="board" style="width: 600px"></div>
+        
+        <div class="game-controls">
+            <button id="resign">Abandonner</button>
+            <button id="draw">Proposer nulle</button>
+        </div>
+    </div>
+
+    <script>
+        const game = new Chess();
+        const board = Chessboard('board', {
+            position: 'start',
+            draggable: true,
+            orientation: '{{ color }}',
+            pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+        });
+
+        // Initialisation de Socket.IO avec gestion des reconnexions
+        const socket = io({
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
+            reconnectionAttempts: 5
+        });
+
+        const gameUuid = '{{ game.game_uuid }}';
+        let isMyTurn = false;
+
+        // Gestion des événements de connexion
+        socket.on('connect', () => {
+            console.log('Connecté au serveur');
+            socket.emit('join_game', { game_uuid: gameUuid });
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Déconnecté du serveur');
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Erreur de connexion:', error);
+        });
+
+        // Rejoindre la salle de jeu
+        socket.on('game_state', function(data) {
+            console.log('État du jeu reçu:', data);
+            if (data.board_fen) {
+                game.load(data.board_fen);
+                board.position(data.board_fen);
+                isMyTurn = (data.current_turn === '{{ color }}');
+                updateGameStatus(data);
+            }
+        });
+
+        function updateGameStatus(data) {
+            const statusDiv = document.querySelector('.game-status');
+            if (data.is_game_over) {
+                let result = '';
+                if (data.winner === null) {
+                    result = 'Match nul';
+                } else {
+                    result = data.winner === '{{ color }}' ? 'Vous avez gagné !' : 'Vous avez perdu !';
+                }
+                statusDiv.innerHTML += `<p class="game-result">${result}</p>`;
+            } else {
+                statusDiv.innerHTML = `
+                    <p>Votre couleur : <strong>{{ color|title }}</strong></p>
+                    <p>Adversaire : <strong>{{ opponent.username }}</strong></p>
+                    <p>Tour actuel : <strong>${data.current_turn}</strong></p>
+                `;
+            }
+        }
+
+        // Gestion des mouvements
+        function onDragStart(source, piece) {
+            if (game.game_over() || 
+                !isMyTurn ||
+                (game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+                (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
+                return false;
+            }
+        }
+
+        function makeMove(source, target) {
+            const move = game.move({
+                from: source,
+                to: target,
+                promotion: 'q'
+            });
+
+            if (move === null) return false;
+
+            board.position(game.fen());
+            socket.emit('make_move', {
+                game_uuid: gameUuid,
+                move: move.from + move.to + (move.promotion || '')
+            });
+            return true;
+        }
+
+        function onDrop(source, target) {
+            return makeMove(source, target);
+        }
+
+        function onSnapEnd() {
+            board.position(game.fen());
+        }
+
+        board.on('dragStart', onDragStart);
+        board.on('drop', onDrop);
+        board.on('snapEnd', onSnapEnd);
+
+        // Gestion des contrôles
+        $('#resign').click(function() {
+            if (confirm('Êtes-vous sûr de vouloir abandonner la partie ?')) {
+                socket.emit('resign_game', { game_uuid: gameUuid });
+            }
+        });
+
+        $('#draw').click(function() {
+            socket.emit('offer_draw', { game_uuid: gameUuid });
+        });
+
+        // Écouter les événements de fin de partie
+        socket.on('game_over', function(data) {
+            alert('La partie est terminée : ' + data.result);
+            window.location.href = '/games';
+        });
+
+        // Écouter les propositions de nulle
+        socket.on('draw_offered', function() {
+            if (confirm('Votre adversaire propose la nulle. Acceptez-vous ?')) {
+                socket.emit('accept_draw', { game_uuid: gameUuid });
+            } else {
+                socket.emit('decline_draw', { game_uuid: gameUuid });
+            }
+        });
+
+        socket.on('draw_declined', function() {
+            alert('Votre adversaire a refusé la nulle');
+        });
+    </script>
+</body>
+</html> 

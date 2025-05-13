@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parties - Chess Game</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2c3e50 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .games-container {
+            max-width: 1200px;
+            margin: 50px auto;
+            padding: 30px;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+        }
+        .btn-primary {
+            background: #3498db;
+            border: none;
+            padding: 10px 30px;
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .btn-success {
+            background: #2ecc71;
+            border: none;
+            padding: 10px 30px;
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .btn-success:hover {
+            background: #27ae60;
+        }
+        .nav-link {
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 0 5px;
+            display: inline-block;
+        }
+        .nav-link:hover {
+            color: white;
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+        .navbar {
+            background: rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            padding: 15px 0;
+        }
+        .navbar-brand {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        .btn-logout {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .btn-logout:hover {
+            background: #c0392b;
+            color: white;
+            transform: translateY(-2px);
+        }
+        .button-group {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+        }
+        .game-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+        }
+        .game-card:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-2px);
+        }
+        .matchmaking-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+        .queue-status {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+        .queue-status.active {
+            display: block;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: #2ecc71;
+            color: white;
+            border-radius: 5px;
+            display: none;
+            z-index: 1000;
+            animation: slideIn 0.5s ease-out;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="/">Chess Game</a>
+            <div class="ms-auto button-group">
+                <a href="/profile" class="nav-link">Mon Profil</a>
+                <button class="btn btn-logout" onclick="handleLogout()">Déconnexion</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="games-container">
+        <h2 class="mb-4">Parties</h2>
+        
+        <div class="matchmaking-buttons">
+            <button class="btn btn-primary" onclick="startMatchmaking('ranked')">Matchmaking Classé</button>
+            <button class="btn btn-success" onclick="startMatchmaking('casual')">Matchmaking Décontracté</button>
+        </div>
+
+        <div class="queue-status" id="queueStatus">
+            <h4>Recherche d'adversaire en cours...</h4>
+            <p>Position dans la file : <span id="queuePosition">1</span></p>
+            <p>Joueurs en attente : <span id="totalPlayers">1</span></p>
+            <button class="btn btn-danger" onclick="cancelMatchmaking()">Annuler</button>
+        </div>
+
+        <div class="notification" id="matchFoundNotification">
+            Match trouvé ! Redirection vers la partie...
+        </div>
+
+        <h3 class="mb-3">Parties en attente</h3>
+        <div id="waitingGames"></div>
+    </div>
+
+    <script>
+        let currentGameType = null;
+        let queueCheckInterval = null;
+
+        async function loadWaitingGames() {
+            try {
+                const response = await fetch('/api/games/waiting');
+                const games = await response.json();
+                
+                const waitingGamesDiv = document.getElementById('waitingGames');
+                waitingGamesDiv.innerHTML = '';
+                
+                games.forEach(game => {
+                    const gameCard = document.createElement('div');
+                    gameCard.className = 'game-card';
+                    gameCard.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5>Partie de ${game.creator}</h5>
+                                <p>Type: ${game.game_type === 'ranked' ? 'Classé' : 'Décontracté'}</p>
+                            </div>
+                            <button class="btn btn-primary" onclick="joinGame(${game.id})">Rejoindre</button>
+                        </div>
+                    `;
+                    waitingGamesDiv.appendChild(gameCard);
+                });
+            } catch (error) {
+                console.error('Erreur lors du chargement des parties:', error);
+            }
+        }
+
+        async function joinGame(gameId) {
+            try {
+                const response = await fetch(`/api/games/join/${gameId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    window.location.href = `/chessgame/${data.game_uuid}`;
+                } else {
+                    alert(data.error || 'Erreur lors de la création de la partie');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                alert('Erreur lors de la création de la partie');
+            }
+        }
+
+        async function startMatchmaking(gameType) {
+            currentGameType = gameType;
+            try {
+                const response = await fetch('/api/games/matchmaking', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        game_type: gameType
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.match_found) {
+                        showMatchFoundNotification(data.opponent, data.color);
+                        setTimeout(() => {
+                            window.location.href = `/chessgame/${data.game_uuid}`;
+                        }, 2000);
+                    } else {
+                        document.getElementById('queueStatus').classList.add('active');
+                        startQueueCheck();
+                    }
+                } else {
+                    alert(data.error);
+                }
+            } catch (error) {
+                console.error('Erreur lors du matchmaking:', error);
+            }
+        }
+
+        function startQueueCheck() {
+            if (queueCheckInterval) {
+                clearInterval(queueCheckInterval);
+            }
+            
+            queueCheckInterval = setInterval(async () => {
+                try {
+                    // Vérifier la position dans la file
+                    const queueResponse = await fetch(`/api/games/matchmaking/status?game_type=${currentGameType}`);
+                    const queueData = await queueResponse.json();
+                    
+                    if (queueData.in_queue) {
+                        document.getElementById('queuePosition').textContent = queueData.queue_position;
+                        document.getElementById('totalPlayers').textContent = queueData.total_players;
+                    } else {
+                        clearInterval(queueCheckInterval);
+                        document.getElementById('queueStatus').classList.remove('active');
+                    }
+
+                    // Vérifier si un match a été trouvé
+                    const matchResponse = await fetch('/api/games/matchmaking/check');
+                    const matchData = await matchResponse.json();
+                    
+                    if (matchData.match_found) {
+                        clearInterval(queueCheckInterval);
+                        document.getElementById('queueStatus').classList.remove('active');
+                        showMatchFoundNotification(matchData.opponent, matchData.color);
+                        setTimeout(() => {
+                            window.location.href = `/chessgame/${matchData.game_uuid}`;
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.error('Erreur lors de la vérification:', error);
+                }
+            }, 1000);
+        }
+
+        function showMatchFoundNotification(opponent, color) {
+            const notification = document.getElementById('matchFoundNotification');
+            notification.textContent = `Match trouvé contre ${opponent} ! Vous jouez les ${color === 'white' ? 'blancs' : 'noirs'}. Redirection...`;
+            notification.style.display = 'block';
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 2000);
+        }
+
+        async function cancelMatchmaking() {
+            try {
+                const response = await fetch(`/api/games/matchmaking/cancel?game_type=${currentGameType}`, {
+                    method: 'POST'
+                });
+                
+                if (response.ok) {
+                    clearInterval(queueCheckInterval);
+                    document.getElementById('queueStatus').classList.remove('active');
+                }
+            } catch (error) {
+                console.error('Erreur lors de l\'annulation du matchmaking:', error);
+            }
+        }
+
+        async function handleLogout() {
+            try {
+                const response = await fetch('/logout');
+                if (response.ok) {
+                    window.location.href = '/';
+                }
+            } catch (error) {
+                alert('Erreur lors de la déconnexion');
+            }
+        }
+
+        // Charger les parties en attente au chargement de la page
+        window.addEventListener('load', loadWaitingGames);
+    </script>
+</body>
+</html> 

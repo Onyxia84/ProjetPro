@@ -35,143 +35,94 @@
         <div id="board" style="width: 600px"></div>
         
         <div class="game-controls">
+            <button id="saluer">Dire bonjour</button>
             <button id="resign">Abandonner</button>
             <button id="draw">Proposer nulle</button>
+            <div class="manual-move">
+                <input type="text" id="moveInput" placeholder="Entrez un coup ex: e2e4" />
+                <button id="playMove">Jouer</button>
+            </div>
         </div>
     </div>
 
     <script>
+    $(document).ready(function () {
         const game = new Chess();
         const board = Chessboard('board', {
             position: 'start',
-            draggable: true,
+            draggable: false,  // On désactive drag&drop pour l’instant
             orientation: '{{ color }}',
             pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
         });
 
-        // Initialisation de Socket.IO avec gestion des reconnexions
-        const socket = io({
-            reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
-            reconnectionAttempts: 5
-        });
-
+        const socket = io();
+        window.socket = socket;
         const gameUuid = '{{ game.game_uuid }}';
-        let isMyTurn = false;
 
-        // Gestion des événements de connexion
         socket.on('connect', () => {
-            console.log('Connecté au serveur');
+            console.log('✅ Connecté');
             socket.emit('join_game', { game_uuid: gameUuid });
         });
 
-        socket.on('disconnect', () => {
-            console.log('Déconnecté du serveur');
-        });
-
-        socket.on('connect_error', (error) => {
-            console.error('Erreur de connexion:', error);
-        });
-
-        // Rejoindre la salle de jeu
-        socket.on('game_state', function(data) {
-            console.log('État du jeu reçu:', data);
+        socket.on('game_state', function (data) {
             if (data.board_fen) {
                 game.load(data.board_fen);
-                board.position(data.board_fen);
-                isMyTurn = (data.current_turn === '{{ color }}');
-                updateGameStatus(data);
+                board.position(data.board_fen, true); // 👈 animation activée
+            }
+
+            // Attendre un court délai pour laisser le temps à l'animation
+            if (data.is_game_over) {
+                setTimeout(() => {
+                    if (data.winner === 'draw') {
+                        alert("Partie nulle !");
+                    } else {
+                        alert("Victoire des " + (data.winner === 'white' ? "Blancs" : "Noirs") + " !");
+                    }
+                }, 300); // 300ms ≈ temps de l’animation
             }
         });
 
-        function updateGameStatus(data) {
-            const statusDiv = document.querySelector('.game-status');
-            if (data.is_game_over) {
-                let result = '';
-                if (data.winner === null) {
-                    result = 'Match nul';
-                } else {
-                    result = data.winner === '{{ color }}' ? 'Vous avez gagné !' : 'Vous avez perdu !';
-                }
-                statusDiv.innerHTML += `<p class="game-result">${result}</p>`;
-            } else {
-                statusDiv.innerHTML = `
-                    <p>Votre couleur : <strong>{{ color|title }}</strong></p>
-                    <p>Adversaire : <strong>{{ opponent.username }}</strong></p>
-                    <p>Tour actuel : <strong>${data.current_turn}</strong></p>
-                `;
-            }
+
+
+        // ✅ Nouveau : gestion du champ de saisie de coup
+       $('#playMove').click(function () {
+        const moveInput = $('#moveInput').val().trim();
+
+        if (moveInput.length < 4) {
+            alert("Format invalide. Utilisez un format comme e2e4 ou e7e8q");
+            return;
         }
 
-        // Gestion des mouvements
-        function onDragStart(source, piece) {
-            if (game.game_over() || 
-                !isMyTurn ||
-                (game.turn() === 'w' && piece.search(/^b/) !== -1) ||
-                (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
-                return false;
-            }
-        }
+        const move = {
+            from: moveInput.slice(0, 2),
+            to: moveInput.slice(2, 4),
+            promotion: moveInput.length > 4 ? moveInput.slice(4) : undefined
+        };
 
-        function makeMove(source, target) {
-            const move = game.move({
-                from: source,
-                to: target,
-                promotion: 'q'
-            });
+        const result = game.move(move);  // move local pour affichage
 
-            if (move === null) return false;
-
+        if (result) {
             board.position(game.fen());
             socket.emit('make_move', {
                 game_uuid: gameUuid,
                 move: move.from + move.to + (move.promotion || '')
             });
-            return true;
+            $('#moveInput').val('');
+        } else {
+            alert("Coup invalide.");
         }
+    });
 
-        function onDrop(source, target) {
-            return makeMove(source, target);
-        }
 
-        function onSnapEnd() {
-            board.position(game.fen());
-        }
-
-        board.on('dragStart', onDragStart);
-        board.on('drop', onDrop);
-        board.on('snapEnd', onSnapEnd);
-
-        // Gestion des contrôles
-        $('#resign').click(function() {
-            if (confirm('Êtes-vous sûr de vouloir abandonner la partie ?')) {
-                socket.emit('resign_game', { game_uuid: gameUuid });
-            }
-        });
-
-        $('#draw').click(function() {
-            socket.emit('offer_draw', { game_uuid: gameUuid });
-        });
-
-        // Écouter les événements de fin de partie
-        socket.on('game_over', function(data) {
+        // Autres événements éventuels (nulle, abandon, etc.)
+        socket.on('game_over', function (data) {
             alert('La partie est terminée : ' + data.result);
             window.location.href = '/games';
         });
+    });
+</script>
 
-        // Écouter les propositions de nulle
-        socket.on('draw_offered', function() {
-            if (confirm('Votre adversaire propose la nulle. Acceptez-vous ?')) {
-                socket.emit('accept_draw', { game_uuid: gameUuid });
-            } else {
-                socket.emit('decline_draw', { game_uuid: gameUuid });
-            }
-        });
 
-        socket.on('draw_declined', function() {
-            alert('Votre adversaire a refusé la nulle');
-        });
-    </script>
+
 </body>
 </html> 

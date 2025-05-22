@@ -4,51 +4,52 @@ from datetime import datetime
 from flask_socketio import emit
 
 class ChessGame:
-    def __init__(self, game_uuid, white_player_id, black_player_id):
+    def __init__(self, game_uuid, white_id, black_id):
         self.game_uuid = game_uuid
-        self.white_player_id = white_player_id
-        self.black_player_id = black_player_id
+        self.white_player_id = white_id
+        self.black_player_id = black_id
         self.board = chess.Board()
-        self.moves = []
-        self.game_over = False
-        self.winner = None
-        self.socketio = None
-        self.last_move_time = datetime.now()
         self.current_turn = 'white'
+        self.game_over = False
+        self.socketio = None  # ✅ Important
 
-    def set_socketio(self, socketio):
-        self.socketio = socketio
+    def set_socketio(self, socketio_instance):
+         self.socketio = socketio_instance
+
+    def get_winner(self):
+        if not self.board.is_game_over():
+            return None
+
+        outcome = self.board.outcome()
+        if outcome.winner is None:
+            return 'draw'
+        return 'white' if outcome.winner else 'black'
+
+
 
     def make_move(self, player_id, move_uci):
-        if self.game_over:
-            return False, "La partie est terminée"
+        print("[INFO] Coup reçu :", move_uci, "de joueur ID", player_id)
 
-        if not self.is_player_turn(player_id):
-            return False, "Ce n'est pas votre tour"
+        if self.game_over:
+            print("[INFO] La partie est déjà terminée")
+            return False, "La partie est terminée"
 
         try:
             move = chess.Move.from_uci(move_uci)
             if move in self.board.legal_moves:
                 self.board.push(move)
-                self.moves.append(move_uci)
-                self.last_move_time = datetime.now()
                 self.current_turn = 'black' if self.current_turn == 'white' else 'white'
-                
-                # Vérifier l'état de la partie
-                if self.board.is_checkmate():
-                    self.game_over = True
-                    self.winner = 'white' if self.board.turn == chess.BLACK else 'black'
-                elif self.board.is_stalemate() or self.board.is_insufficient_material():
-                    self.game_over = True
-                    self.winner = None
-
-                # Émettre l'état du jeu à tous les joueurs
+                print("[INFO] Coup appliqué. Nouveau FEN :", self.board.fen())
                 self.emit_game_state()
-                return True, "Mouvement effectué"
+                return True, "Coup accepté"
             else:
-                return False, "Mouvement illégal"
+                print("[INFO] Coup illégal selon python-chess")
+                return False, "Coup illégal"
         except Exception as e:
+            print("[ERREUR] Problème dans make_move :", str(e))
             return False, str(e)
+
+
 
     def is_player_turn(self, player_id):
         if self.current_turn == 'white':
@@ -57,16 +58,14 @@ class ChessGame:
             return player_id == self.black_player_id
 
     def emit_game_state(self):
-        if self.socketio:
-            game_state = {
-                'board_fen': self.board.fen(),
-                'current_turn': self.current_turn,
-                'is_game_over': self.game_over,
-                'winner': self.winner,
-                'last_move': self.moves[-1] if self.moves else None,
-                'legal_moves': [move.uci() for move in self.board.legal_moves]
-            }
-            self.socketio.emit('game_state', game_state, room=self.game_uuid)
+           self.socketio.emit('game_state', {
+        'board_fen': self.board.fen(),
+        'turn': 'white' if self.board.turn else 'black',
+        'is_game_over': self.board.is_game_over(),
+        'winner': 'white' if self.board.result() == '1-0' else 'black' if self.board.result() == '0-1' else 'draw',
+    }, room=self.game_uuid)
+
+
 
     def handle_disconnect(self, player_id):
         if not self.game_over:

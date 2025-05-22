@@ -97,7 +97,7 @@ def games():
 
 @app.route('/api/games/create', methods=['POST'])
 @login_required
-def create_game():
+def create_game_api():
     try:
         data = request.get_json()
         game_type = data.get('game_type', 'casual')
@@ -474,6 +474,7 @@ def handle_join_game(data):
 
 @socketio.on('make_move')
 def handle_make_move(data):
+    print("[DEBUG] Socket reçu : make_move", data)
     game_uuid = data['game_uuid']
     move_uci = data['move']
     
@@ -524,6 +525,15 @@ def handle_decline_draw(data):
         socketio.emit('draw_declined', room=game_uuid)
         return {'status': 'success'}
     return {'status': 'error', 'message': 'Partie non trouvée'}
+
+@socketio.on('send_greeting')
+def handle_greeting(data):
+    print("Greeting reçu :", data)
+    game_uuid = data['game_uuid']
+    message = data['message']
+    # Envoyer à tous les membres de la room (y compris l'expéditeur si souhaité)
+    socketio.emit('receive_greeting', {'message': message}, room=game_uuid)
+
 
 # Créer la base de données si elle n'existe pas
 with app.app_context():

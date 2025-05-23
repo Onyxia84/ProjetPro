@@ -9,7 +9,7 @@ from collections import defaultdict
 import threading
 import time
 import uuid
-from chessgame import init_socketio, create_game, active_games
+from chessgame import init_socketio, create_game, active_games, get_game
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'votre_cle_secrete_ici'
@@ -30,6 +30,9 @@ queue_lock = threading.Lock()
 
 # Dictionnaire pour stocker les notifications de match
 match_notifications = defaultdict(dict)
+
+user_sockets = {}
+
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -401,10 +404,11 @@ def user_status():
             'username': current_user.username,
             'email': current_user.email,
             'stats': {
-                'games_played': current_user.games_played,
-                'wins': current_user.wins,
-                'losses': current_user.losses,
-                'draws': current_user.draws
+                "games_played": current_user.games_played,
+                "wins": current_user.wins,
+                "losses": current_user.losses,
+                "draws": current_user.draws,
+                "elo_rating": current_user.elo_rating
             }
         })
     return jsonify({'is_authenticated': False})
@@ -452,7 +456,8 @@ def logout():
 
 @socketio.on('connect')
 def handle_connect():
-    print('Client connecté')
+    print("[SOCKET] Connexion établie (mais sans user_id tant que join_game n'est pas appelé)")
+
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -462,15 +467,28 @@ def handle_disconnect():
 def handle_join_game(data):
     game_uuid = data['game_uuid']
     game = Game.query.filter_by(game_uuid=game_uuid).first()
+
     if game and current_user.id in [game.white_player_id, game.black_player_id]:
         join_room(game_uuid)
+
+        # 🧠 Ajoute ces lignes ici
+        user_sockets[current_user.id] = request.sid
+        if request.sid in socketio.server.environ:
+            socketio.server.environ[request.sid]['user_id'] = current_user.id
+
+        print(f"[SOCKET] {current_user.username} a rejoint la room {game_uuid}")
+
         # Initialiser la partie si elle n'existe pas déjà
         if game_uuid not in active_games:
             chess_game = create_game(game_uuid, game.white_player_id, game.black_player_id)
             chess_game.set_socketio(socketio)
             active_games[game_uuid] = chess_game
+
         return {'status': 'success'}
+
     return {'status': 'error', 'message': 'Partie non trouvée ou accès non autorisé'}
+
+
 
 @socketio.on('make_move')
 def handle_make_move(data):
@@ -489,42 +507,76 @@ def handle_make_move(data):
 
 @socketio.on('resign_game')
 def handle_resign_game(data):
-    game_uuid = data['game_uuid']
-    if game_uuid in active_games:
-        game = active_games[game_uuid]
-        game.handle_disconnect(current_user.id)
-        socketio.emit('game_over', {'result': 'Abandon'}, room=game_uuid)
-        return {'status': 'success'}
-    return {'status': 'error', 'message': 'Partie non trouvée'}
+    game_uuid = data.get('game_uuid')
+    player_id = current_user.id
+    game = get_game(game_uuid)
+
+    if game:
+        game.game_over = True
+
+        if player_id == game.white_player_id:
+            game.winner = 'black'
+            winner_color = 'Noirs'
+        else:
+            game.winner = 'white'
+            winner_color = 'Blancs'
+
+        db_game = Game.query.filter_by(game_uuid=game_uuid).first()
+        if db_game:
+            db_game.status = 'finished'
+            db.session.commit()
+
+        socketio.emit('game_over', {
+            'result': f'Victoire des {winner_color} (abandon)',
+            'winner': game.winner,
+            'game_uuid': game_uuid
+        }, room=game_uuid)
+
+
 
 @socketio.on('offer_draw')
 def handle_offer_draw(data):
-    game_uuid = data['game_uuid']
-    if game_uuid in active_games:
-        game = active_games[game_uuid]
-        opponent_id = game.black_player_id if current_user.id == game.white_player_id else game.white_player_id
-        socketio.emit('draw_offered', room=game_uuid)
-        return {'status': 'success'}
-    return {'status': 'error', 'message': 'Partie non trouvée'}
+    print(f"[SOCKET] Offre de nulle reçue pour {data['game_uuid']} par {current_user.username}")
+    game_uuid = data.get('game_uuid')
+    game = get_game(game_uuid)
+
+    if game:
+        if current_user.id == game.white_player_id:
+            opponent_id = game.black_player_id
+        else:
+            opponent_id = game.white_player_id
+
+        opponent_sid = user_sockets.get(opponent_id)
+        if opponent_sid:
+            socketio.emit('draw_offered', {'game_uuid': game_uuid}, room=opponent_sid)
+        else:
+            print(f"[ERREUR] SID non trouvé pour l'adversaire {opponent_id}")
+
 
 @socketio.on('accept_draw')
 def handle_accept_draw(data):
-    game_uuid = data['game_uuid']
-    if game_uuid in active_games:
-        game = active_games[game_uuid]
+    game = get_game(data['game_uuid'])
+    if game:
         game.game_over = True
         game.winner = None
-        socketio.emit('game_over', {'result': 'Nulle'}, room=game_uuid)
-        return {'status': 'success'}
-    return {'status': 'error', 'message': 'Partie non trouvée'}
+        db_game = Game.query.filter_by(game_uuid=game.game_uuid).first()
+        if db_game:
+            db_game.status = 'finished'
+            db.session.commit()
+
+        socketio.emit('game_over', {
+            'result': 'Partie nulle',
+            'game_uuid': game.game_uuid
+        }, room=game.game_uuid)
 
 @socketio.on('decline_draw')
 def handle_decline_draw(data):
-    game_uuid = data['game_uuid']
-    if game_uuid in active_games:
-        socketio.emit('draw_declined', room=game_uuid)
-        return {'status': 'success'}
-    return {'status': 'error', 'message': 'Partie non trouvée'}
+    game = get_game(data['game_uuid'])
+    if game:
+        game.decline_draw()
+
+
+
 
 @socketio.on('send_greeting')
 def handle_greeting(data):
